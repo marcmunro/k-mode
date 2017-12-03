@@ -31,7 +31,7 @@ What is Lacking?
 - updates of next-error to match those in k-compile;
 - handling of grep and friends;
 - projects based on other SCMs (ie other than git);
-- kill-ring tweaks (see [k-cua][#k-cua] below);
+- kill-ring tweaks (see k-cua below);
 - name shortening for long names in k-tabbar;
 - buffer-placement improvements (see k-frame below);
 - a redo feature;
@@ -46,11 +46,10 @@ What is Lacking?
 What Works (and is maybe good)?
 ===============================
 
-<a name="k-cua">
 k-cua
 -----
 
-k-cua: takes the standard, friendly-ish useful and powerful cua-mode and
+This takes the standard, friendly-ish useful and powerful cua-mode and
 extends it a little.
 
 - All deletions now go to the kill-ring, even if done by backspace or by
@@ -58,8 +57,7 @@ extends it a little.
 
   There should probably be a lower limit on kills composed entirely of
   backspaces, and we should probably remove trailing whitespace from
-  kills, but that's for the future (see [what is lacking][#lacking]
-  above).
+  kills, but that's for the future (see what is lacking above).
 
 - The insert key is mapped to yank, and shift-insert to yank-pop.  Use
   ctrl-insert to toggle overwrite mode.
