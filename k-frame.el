@@ -958,9 +958,7 @@ checked.")
       ;; We use the with-current-buffer form to ensure that we don't
       ;; change current-buffer as we go through this.
       (and (k-frame::significant-buffer-p buffer)
-	   (progn
-	     (k-frame::drop-buffer buffer)
-	     (message "BUFFER %s DROPPED IN K-FRAME" buffer)))
+	   (k-frame::drop-buffer buffer))
       (when k-frame::auto-delete-frames 
 	(mapc
 	 (lambda (frame)

@@ -74,6 +74,8 @@ provide a different compilation command history for each project."
   "Ask to save only files within the project of the current buffer, and
 provide a different compilation command history for each project."
   (interactive
+   ;; If you need to understand this, take a look at nadvice.el in the
+   ;; emacs distribution.  There are comments there that help.
    (lambda (spec)
      (setq k-compile::old-history compile-history
 	   k-compile::old-command compile-command)
