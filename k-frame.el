@@ -164,6 +164,11 @@
       (set-frame-parameter frame 'buffer-list
 			   (cons buffer blist)))))
 
+(defvar k-frame::last-significant-killed-buffer nil
+  "Records the last significant buffer that was killed.  This is used so
+  that code that tests for significant buffers as part of the
+  kill-buffer process continue to get a useful result.")
+
 (defun k-frame::significant-buffer-p (buf)
   "Return t if BUF is considered significant.  This is all buffers
   except those whose names begin with space and have no associated
@@ -172,12 +177,14 @@
   `k-frame::buffer-details'."
   (or (buffer-file-name buf)
       (memq buf k-frame::significant-buffers)
+      (eq buf k-frame::last-significant-killed-buffer)
       (not (string-match-p "^ \\*" (buffer-name buf)))))
 
 (defun k-frame::drop-buffer (buffer)
   "Drop all records of BUFFER from k-frame's state."
   (setq k-frame::significant-buffers
-	(delq buffer k-frame::significant-buffers))
+	(delq buffer k-frame::significant-buffers)
+	k-frame::last-significant-killed-buffer buffer)
   (walk-windows
    (lambda (window)
      (set-window-parameter
@@ -947,21 +954,26 @@ checked.")
   (let ((k-frame::auto-kill-buffers-conditionally nil)
 	(window (selected-window))
 	(buffer (current-buffer)))
-    (and (k-frame::significant-buffer-p buffer)
-	 (k-frame::drop-buffer buffer))
-    (if k-frame::auto-delete-frames 
+    (with-current-buffer buffer
+      ;; We use the with-current-buffer form to ensure that we don't
+      ;; change current-buffer as we go through this.
+      (and (k-frame::significant-buffer-p buffer)
+	   (progn
+	     (k-frame::drop-buffer buffer)
+	     (message "BUFFER %s DROPPED IN K-FRAME" buffer)))
+      (when k-frame::auto-delete-frames 
 	(mapc
 	 (lambda (frame)
 	   (unless (k-frame::has-other-significant-buffer-p frame buffer)
 	     (delete-frame frame)))
-	 (frame-list)))
-    (if (and k-frame::auto-close-windows
-	     (eq buffer (window-buffer window))
-	     (> (length (k-frame::frame-windows)) 1))
+       (frame-list)))
+      (when (and k-frame::auto-close-windows
+		 (eq buffer (window-buffer window))
+		 (> (length (k-frame::frame-windows)) 1))
 	;; Cannot delete-window directly here as that will change the
 	;; selected-window and thereby the current-buffer, leading
 	;; to mayhem and sadness.
-	(setq k-frame::window-to-delete window))))
+	(setq k-frame::window-to-delete window)))))
 
 (defun k-frame::buffer-appears-on-other-frame-p (buffer frame)
   "T if BUFFER appears in the buffer-list of any frame other than

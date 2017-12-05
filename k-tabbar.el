@@ -1281,12 +1281,15 @@ The tabbar-line takes tabbar-elems and applies scrolling to it."
   "Hook function called before the current buffer is killed.
   Responsible for removing all references to the buffer from our state."
   (let ((buffer (current-buffer)))
-    (when (k-frame::significant-buffer-p buffer)
-      ;; Prevent `k-tabbar::update-buffer-list from re-adding buffer
-      ;; back into our state before buffer is actually killed.
-      (setq k-tabbar::last-killed-buffer buffer)
-      (k-tabbar::drop-buffer buffer)
-      (force-window-update))))
+    (with-current-buffer buffer
+      ;; We use the with-current-buffer form to ensure that we haven't
+      ;; changed current-buffer on exit.
+      (when (k-frame::significant-buffer-p buffer)
+	;; Prevent `k-tabbar::update-buffer-list from re-adding buffer
+	;; back into our state before buffer is actually killed.
+	(setq k-tabbar::last-killed-buffer buffer)
+	(k-tabbar::drop-buffer buffer)
+	(force-window-update)))))
 
 (defvar k-tabbar::deleting-frame nil
   "TODO: doc string")
@@ -1472,3 +1475,4 @@ The tabbar-line takes tabbar-elems and applies scrolling to it."
   )
 
 
+(with-current-buffer
