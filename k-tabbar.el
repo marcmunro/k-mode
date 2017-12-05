@@ -1063,8 +1063,8 @@ buffer."
 	(is-bg (window-parameter window 'k-tabbar::show-buffer-group))
 	(result (copy-sequence elems))
 	spaces tail)
-    (when scroll-pos
-      (setq tail (nthcdr scroll-pos result))
+    (when (and scroll-pos
+	       (setq tail (nthcdr scroll-pos result)))
       (setcdr tail nil)
       (setcar tail (k-tabbar::scroll-button '> is-bg))
       (setq spaces (k-tabbar::spare-space result))
@@ -1176,19 +1176,18 @@ buffer."
   Note that this *must* be a single-depth (ie unnested list) in order for
   scrolling to work."
   (let ((buffer-group-keys (k-tabbar::buffer-group-keys window)))
-    (cdr
-     (apply
-      #'append
-      (mapcar
-       (lambda (bgkey)
-	 (list (k-tabbar::separator t)
-	       (k-tabbar::button
-		(k-tabbar::buffer-group-name bgkey)
-		t nil nil
-		(k-tabbar::buffer-group-help bgkey)
-		k-tabbar::buffer-group-entry-keymap
-		'buffer-group bgkey)))
-       (cdr buffer-group-keys))))))
+    (apply
+     #'append
+     (mapcar
+      (lambda (bgkey)
+	(list (k-tabbar::separator t)
+	      (k-tabbar::button
+	       (k-tabbar::buffer-group-name bgkey)
+	       t nil nil
+	       (k-tabbar::buffer-group-help bgkey)
+	       k-tabbar::buffer-group-entry-keymap
+	       'buffer-group bgkey)))
+      (cdr buffer-group-keys)))))
 
 (defun k-tabbar::tabbar-elems (window)
   "Generate a tabbar-line for WINDOW.  This is normally called only if
@@ -1210,7 +1209,6 @@ The tabbar-line takes tabbar-elems and applies scrolling to it."
 		window 'k-tabbar::tabbar-elems))
 	(scroll-amount
 	 (window-parameter window 'k-tabbar::tabbar-scroll)))
-    
     (k-tabbar::tabbar-add-scroll
      window
      (if (and scroll-amount (> scroll-amount 0))
@@ -1438,29 +1436,39 @@ The tabbar-line takes tabbar-elems and applies scrolling to it."
 (when nil
   ;; BUILDING/TESTING THIS
 
-(defun k-tabbar::format-buffer (buf)
-  "Return a string that shows buf, in an easily read format."
-   (format "        %s" buf))
+  (defun k-tabbar::format-buffer (buf)
+    "Return a string that shows buf, in an easily read format."
+    (format "        %s" buf))
 
-(defun k-tabbar::format-buffer-group (bgroup)
-  "Return a string that shows BGROUP, in an easily read format."
-  ;; TODO: Add formatted buffer-group name
-  (concat 
-   (format "  %s:\n" (car bgroup))
-   (mapconcat 'k-tabbar::format-buffer (cdr bgroup) "\n")))
+  (defun k-tabbar::format-buffer-group (bgroup)
+    "Return a string that shows BGROUP, in an easily read format."
+    ;; TODO: Add formatted buffer-group name
+    (concat 
+     (format "  %s:\n" (car bgroup))
+     (mapconcat 'k-tabbar::format-buffer (cdr bgroup) "\n")))
   
-(defun k-tabbar::format-buffer-groups ()
-  "Return a string that shows the current tabbar state, in an easily
+  (defun k-tabbar::format-buffer-groups ()
+    "Return a string that shows the current tabbar state, in an easily
   read format."
-  (mapconcat 'k-tabbar::format-buffer-group
-	     k-tabbar::buffer-groups "\n"))
+    (mapconcat 'k-tabbar::format-buffer-group
+	       k-tabbar::buffer-groups "\n"))
+  
+  (progn
+    (k-tabbar::clear-window-cache (selected-window) 'k-tabbar::tabbar-line)
+    (mapcar
+     'insert
+     (k-tabbar::generate-tabbar-line)
+     ))
 
-
-
-  (k-tabbar::generate-tabbar-line)
+  (k-tabbar::tabbar-line (selected-window))
+  
   (k-tabbar::reset-state)
   (k-tabbar::format-buffer-groups)
   (k-tabbar::activate)
   (k-tabbar::deactivate)
-  (setq debug-on-error t)
+  (k-tabbar::switch-to-buffer-groups)
+  (
+   setq debug-on-error t)
   )
+
+

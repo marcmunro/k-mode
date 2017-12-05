@@ -103,16 +103,17 @@
   (let* ((buffer (window-buffer window))
 	 (dalist (k-frame::window-state-dalist window))
 	 (eob-entry (k::dalist-assq dalist buffer 'eob)))
-    (with-current-buffer buffer 
-      ;;(message "RESTORING WINDOW STATE FOR %s ON %s (%s)"
-             ;;buffer window (k-frame::get-marker dalist buffer 'point))
-      (if (cdr eob-entry)
-	  (goto-char (point-max))
-	(let ((start (k-frame::get-marker dalist buffer 'start))
-	      (point (k-frame::get-marker dalist buffer 'point)))
-	  (when (marker-position start)
-	    (set-window-start window start)
-	    (goto-char point)))))))
+    (and buffer
+	 (with-current-buffer buffer 
+	   ;;(message "RESTORING WINDOW STATE FOR %s ON %s (%s)"
+	   ;;buffer window (k-frame::get-marker dalist buffer 'point))
+	   (if (cdr eob-entry)
+	       (goto-char (point-max))
+	     (let ((start (k-frame::get-marker dalist buffer 'start))
+		   (point (k-frame::get-marker dalist buffer 'point)))
+	       (when (marker-position start)
+		 (set-window-start window start)
+		 (goto-char point))))))))
 
 (defun k-frame::last-noted-window ()
   "Return the last window that we were known to be visiting."
