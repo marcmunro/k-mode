@@ -21,6 +21,7 @@
 ;;    displayed on a frame results in the frame being deleted.
 ;;
 ;; TODO:
+;; - Handle change of path for buffers
 ;; - Allow delete-frame to fail if kill-buffer fails
 ;; - allow for region to be highlighted in multiple windows of same frame??
 ;;   (maybe this should be another k module??
@@ -153,16 +154,17 @@
 
 (defun k-frame::record-significant-buffer (buffer)
   "Record that BUFFER has been visited and is thus significant."
-  (unless (memq buffer k-frame::significant-buffers)
-    (setq k-frame::significant-buffers
-	  (cons buffer k-frame::significant-buffers)))
-  (let* ((frame (selected-frame))
-	 (blist (frame-parameter frame 'buffer-list)))
-    (unless (memq buffer blist)
-      ;; Ensure that the buffer is deemed to have been visited by the
-      ;; frame.  WHY IS THIS NOT ALREADY THE CASE?
-      (set-frame-parameter frame 'buffer-list
-			   (cons buffer blist)))))
+  (unless (minibufferp buffer)
+    (unless (memq buffer k-frame::significant-buffers)
+      (setq k-frame::significant-buffers
+	    (cons buffer k-frame::significant-buffers)))
+    (let* ((frame (selected-frame))
+	   (blist (frame-parameter frame 'buffer-list)))
+      (unless (memq buffer blist)
+	;; Ensure that the buffer is deemed to have been visited by the
+	;; frame.  WHY IS THIS NOT ALREADY THE CASE?
+	(set-frame-parameter frame 'buffer-list
+			     (cons buffer blist))))))
 
 (defvar k-frame::last-significant-killed-buffer nil
   "Records the last significant buffer that was killed.  This is used so
@@ -577,7 +579,6 @@ F1 and F2 are alists of frame coords, keyed by frame."
 
 (defun k-frame::capture-window-configuration (window buffer)
   "Capture data about WINDOW so that it can later be perfectly restored."
-  (message "CAPTURE %s %s" window buffer)
   (setq k-frame::restoration-data
 	(list
 	 'k-frame::restore-window-configuration
@@ -759,6 +760,7 @@ options for buffer-placement."
   command caused the window to be split has the opportunity to switch to
   a new buffer in that window.  What this function does is attempt to
   find a more suitable location to display the buffer."
+  (message "HANDLE WINDOW SPLIT")
   (let* ((k-frame::allow-split-window t)
 	 (orig-window (car k-frame::window-to-split))
 	 (buffer (window-buffer k-frame::result-of-split))
@@ -768,9 +770,10 @@ options for buffer-placement."
     (set-window-configuration (nth 1 k-frame::window-to-split))
     ;; Create an entry, for our list of buffer placement options, that
     ;; performs the split-window as originally requested.
-    (setq split-window-entry
-	  (k-frame::make-split-window-entry
-	   buffer orig-window (nth 2 k-frame::window-to-split)))
+    (unless k::in-emacsclient
+      (setq split-window-entry
+	    (k-frame::make-split-window-entry
+	     buffer orig-window (nth 2 k-frame::window-to-split))))
     ;; Create an entry, for our list of buffer placement options, that
     ;; places buffer on a new-frame
     (setq new-frame-entry (k-frame::make-frame-entry buffer))
@@ -780,38 +783,47 @@ options for buffer-placement."
      k-frame::window-to-split nil
      window-list (k-frame::prioritize-placements
 		  (append (k-frame::all-windows (selected-window) t)
-			  (list split-window-entry
-				new-frame-entry))
+			  (if k::in-emacsclient
+			      (list new-frame-entry)
+			    (list split-window-entry
+				  new-frame-entry)))
 		  buffer))
     ;; Place buffer at the first entry from our list of possible
     ;; placements. 
     (apply 'k-frame::place-buffer buffer window-list)))
+
+(defvar k-frame::emacsclient-window nil
+  "The selected window of a frame newly created for emacsclient.")
 
 (defun k-frame::split-window (orig-fun &rest args)
   "Advice function to override normal window splitting mechanism so that
   whatever buffer appears in the new window can be placed more sanely in:
   an existing frame if possible; a new frame if desirable; or in a newly
   split window if necessary."
-  (if (or k-frame::allow-split-window
-	  (minibuffer-window-active-p (selected-window)))
-      (apply orig-fun args)
-    (let ((window (selected-window))
-	  split-window-keep-point)
-      (setq k-frame::window-to-split
-	    (list window
-		  (current-window-configuration (window-frame window))
-		  args))
-      (k-frame::save-window-positions window)
-      (let ((k-frame::allow-split-window t))
-	;; Create a very small window as it will have minimal resdisplay
-	;; requirements.  This will initially be used instead of the
-	;; normal-sized window that split-window would normally return.
-	;; The contents of this window will be examined through our
-	;; pos-command hook function, which will provide an alternative,
-	;; initial, placement for that buffer, and allow the user to
-	;; choose other, possibly more suitable, alternative placements
-	;; through `k-frame::next-window-or-placment'.
-	(setq k-frame::result-of-split (split-window window -2))))))
+  (message "SPLIT WINDOW")
+  (or k-frame::emacsclient-window
+      (if (or k-frame::allow-split-window
+	      (minibuffer-window-active-p (selected-window)))
+	  (apply orig-fun args)
+	(let ((window (selected-window))
+	      split-window-keep-point)
+	  (setq k-frame::window-to-split
+		(list window
+		      (current-window-configuration (window-frame window))
+		      args))
+	  (k-frame::save-window-positions window)
+	  (let ((k-frame::allow-split-window t))
+	    ;; Create a very small window as it will have minimal
+	    ;; resdisplay requirements.  This will initially be used
+	    ;; instead of the normal-sized window that split-window
+	    ;; would normally return.  The contents of this window will
+	    ;; be examined through our pos-command hook function, which
+	    ;; will provide an alternative, initial, placement for that
+	    ;; buffer, and allow the user to choose other, possibly more
+	    ;; suitable, alternative placements through
+	    ;; `k-frame::next-window-or-placment'.
+	    (setq k-frame::result-of-split
+		  (split-window window -2)))))))
 
 (defun k-frame::split-window-command (orig-fun &rest args)
   "Advice function for split-window commands to cancel our override of
@@ -884,6 +896,7 @@ options for buffer-placement."
   (when (k-frame::restore-window-mark window)
     (gui-set-selection 'PRIMARY k-frame::last-primary-selection)
     (setq k-frame::last-noted-buffer (window-buffer window))))
+
 
 ;;;
 ;;; HOOKS INTO EMACS
@@ -1003,7 +1016,13 @@ checked.")
   ;; TODO: HANDLE KILLING OF PROCESS BUFFERS?
   (cond
    ((not (buffer-modified-p buffer))  t)
-   ((k::is-compilation-buffer-p buffer) t)
+   ((k::is-process-buffer-p buffer)
+    (message "KILL PROCESS?")
+    (when (yes-or-no-p
+	   (format "Buffer %s has a running process; kill it?" buffer))
+      (message "ABOUT TO DELETE")
+      (delete-process buffer)
+      t))
    ((k::emacs-buffer-p buffer)  nil)
    (t (if (or buffer-offer-save
 	      (buffer-file-name buffer))
@@ -1038,8 +1057,10 @@ only with FRAME."
 		    (k-frame::significant-buffers frame)))))
 	;; buffers is the list of signicant buffers for frame that are
 	;; associated with no other frames.
+	(message "BUFFERS THAT MAY BE KILLABLE: %s" buffers)
 	(mapc
 	 (lambda (buffer)
+	   (message "BUFFER TO KILL: %s" buffer)
 	   (kill-buffer buffer))
 	 (k-frame::killable-buffers buffers)))))
 
@@ -1051,6 +1072,37 @@ only with FRAME."
   events can be raised which cause last-command to be updated."
   (if (eq last-command 'k-frame::place-buffer)
       (setq this-command 'k-frame::place-buffer)))
+
+(defun k-frame::server-create-window-system-frame (orig-fun &rest args)
+  "Advice function for handling emacsclient windows, so they don't get
+  associated with existing buffers."
+  (setq k::norecord-buffer (current-buffer))
+  (let ((frame (apply orig-fun args)))
+    (raise-frame frame)
+    (setq k-frame::emacsclient-window
+	  (frame-selected-window frame))))
+
+(defun k-frame::server-process-filter (orig-fun &rest args)
+  (let ((k::in-emacsclient t)
+	k::norecord-buffer)
+    (prog1
+	(apply orig-fun args))
+    (k-frame::post-command)
+    (when k-frame::emacsclient-window
+      (k-frame::forget-buffer-visit
+       ;; Remove all trace of new frame's original buffer
+       k-frame::emacsclient-window  k::norecord-buffer)
+      (setq k-frame::emacsclient-window nil))
+    (setq last-command this-command) ;; So buffer-placement can work
+    ))
+
+(defun k-frame::shell (orig-fun &rest args)
+  (let ((window (selected-window))
+	(buffer (apply orig-fun args)))
+    (if (not (eq buffer (window-buffer window)))
+	(k-frame::forget-buffer-visit window buffer))
+    buffer))
+
 
 ;;;
 ;;; ACTIVATION
@@ -1072,6 +1124,11 @@ only with FRAME."
   (k-frame::check-wmctrl)
   (advice-add 'split-window :around #'k-frame::split-window)
   (advice-add 'handle-switch-frame :before #'k-frame::handle-switch-frame)
+  (advice-add 'server-create-window-system-frame :around
+	      #'k-frame::server-create-window-system-frame)
+  (advice-add 'server-process-filter :around
+	      #'k-frame::server-process-filter)
+  (advice-add 'shell :around #'k-frame::shell)
   (add-hook 'buffer-list-update-hook #'k-frame::update-buffer-list)
   (add-hook 'kill-buffer-hook #'k-frame::kill-buffer)
   (add-hook 'delete-frame-functions #'k-frame::delete-frame)
@@ -1082,6 +1139,11 @@ only with FRAME."
   "Deactivate the k-frame stuff."
   (advice-remove 'split-window #'k-frame::split-window)
   (advice-remove 'handle-switch-frame #'k-frame::handle-switch-frame)
+  (advice-add 'server-create-window-system-frame
+	      #'k-frame::server-create-window-system-frame)
+  (advice-remove 'server-process-filter :around
+		 #'k-frame::server-process-filter)
+  (advice-remove 'shell #'k-frame::shell)
   (remove-hook 'buffer-list-update-hook #'k-frame::update-buffer-list)
   (remove-hook 'kill-buffer-hook #'k-frame::kill-buffer)
   (remove-hook 'delete-frame-functions #'k-frame::delete-frame)
@@ -1098,6 +1160,7 @@ only with FRAME."
 
 (define-key k-mode-map [f5] 'k-frame::next-window-or-placement)
 (define-key k-mode-map [S-f5] 'k-frame::prev-window)
+(setq suggest-key-bindings nil)
 
 (provide 'k-frame)
 

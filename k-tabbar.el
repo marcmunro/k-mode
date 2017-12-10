@@ -18,6 +18,10 @@
 ;; - Update and complete mouseover help text
 
 ;; BUGS:
+;; - New *Messages* buffer is not automatically noticed and added to
+;;   tabbar.
+;; - Minibuffers sometimes get added to tabbar buffer groups
+
 
 (require 'k-core)
 (require 'k-frame)  ;; For identfication of significant buffers
@@ -406,23 +410,26 @@ buffer-group."
   they appear in the alist, and each function can prevent further
   functions being tried by throwing `k-tabbar::stop'") 
 
+
 (defun k-tabbar::record-buffer (buf &optional frame)
   "Record the existance of BUF, associating it with the appropriate
   buffer-groups, etc.  With optional FRAME, associate buf with its frame
   buffer-group."
-  (if frame
-      (funcall (cdr (assq 'frame k-tabbar::buffer-group-fns))
-	       buf frame)
-    (when (k-frame::significant-buffer-p buf)
-      (unless (eq buf k-tabbar::last-killed-buffer)
-	(catch 'k-tabbar::stop
-	  (mapc
-	   (lambda (fn-entry)
-	     (unless (eq 'frame (car fn-entry))
-	       ;; Frame is handled as a special case aove
-	       (and (cdr fn-entry)
-		    (funcall (cdr fn-entry) buf))))
-	   k-tabbar::buffer-group-fns))))))
+  (unless (or (minibufferp buf)
+	      (eq buf k::norecord-buffer))
+    (if frame
+	(funcall (cdr (assq 'frame k-tabbar::buffer-group-fns))
+		 buf frame)
+      (when (k-frame::significant-buffer-p buf)
+	(unless (eq buf k-tabbar::last-killed-buffer)
+	  (catch 'k-tabbar::stop
+	    (mapc
+	     (lambda (fn-entry)
+	       (unless (eq 'frame (car fn-entry))
+		 ;; Frame is handled as a special case aove
+		 (and (cdr fn-entry)
+		      (funcall (cdr fn-entry) buf))))
+	     k-tabbar::buffer-group-fns)))))))
 
 (defun k-tabbar::non-frame-buffer-groups ()
   "Return the buffer-group keys for all non-frame buffer-groups."
@@ -1475,4 +1482,3 @@ The tabbar-line takes tabbar-elems and applies scrolling to it."
   )
 
 
-(with-current-buffer

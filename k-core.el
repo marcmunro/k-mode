@@ -344,6 +344,14 @@ stdout.  TODO: Error handling."
 	  (string-trim-right (buffer-string))
 	(throw 'k-shell-error (cons result (buffer-string)))))))
 	
+(defvar k::norecord-buffer nil
+  "Bind this locally and set it to the value of any buffer that should
+  not be recorded (by k-tabbar, k-frame, etc)
+  NOT YET IMPLEMENTED IN K-FRAME - THERE HAS BEEN NO NEED SO FAR.")
+
+(defvar k::in-emacsclient nil
+  "Boolean identifying whether we are setting up an emacsclient
+  buffer.")
 
 
 ;;
