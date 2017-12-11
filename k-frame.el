@@ -10,7 +10,7 @@
 ;;   https://www.gnu.org/licenses/gpl-3.0.html
 
 ;; Frame movement/management stuff
-;; This has 3 main components:
+;; This has the following main components:
 ;; 1) the stuff that allows us to switch frames (and windows)
 ;; 2) the stuff that modifies emacs default handling of frames and windows
 ;;    in order to improve the user experience.  Specifically:
@@ -19,10 +19,16 @@
 ;;    a frame kills all buffers that have not been displayed on any other
 ;;    frame, and killing a buffer that is the only buffer that has been
 ;;    displayed on a frame results in the frame being deleted.
+;; 4) buffer placement
+;;    Whenever `display-buffer' is called (the main culprit in window
+;;    splitting) we offer the choice of placing the buffer on a new
+;;    dedicated buffer or on an existing one, with <f5> being used to
+;;    cycle between the options.  This functionality is active only
+;;    immediately after `display-buffer' is invoked and is shown by
+;;    momentarily highlighting the selected-frame.
 ;;
 ;; TODO:
 ;; - Handle change of path for buffers
-;; - Allow delete-frame to fail if kill-buffer fails
 ;; - allow for region to be highlighted in multiple windows of same frame??
 ;;   (maybe this should be another k module??
 
@@ -627,22 +633,24 @@ F1 and F2 are alists of frame coords, keyed by frame."
 
 (defun k-frame::place-buffer-in-window (buffer window)
   "Place BUFFER in WINDOW, setting state so that the placement can be
-  undone by a call to `k-frame::undo-last-placement'."
+  undone by a call to `k-frame::undo-last-placement', returning window."
   (k-frame::capture-window-configuration window buffer)
   (with-selected-window window
     (switch-to-buffer buffer)
-    (k-frame::flash-frame)))
+    (k-frame::flash-frame))
+  window)
 
 (defun k-frame::place-buffer-in-split-window (buffer window &rest args)
   "Place BUFFER in the window resulting from splitting WINDOW, setting
   state so that the placement can be undone by a call to
-  `k-frame::undo-last-placement'."
+  `k-frame::undo-last-placement', returning the newly created window."
   (k-frame::capture-window-configuration window buffer)
   (let ((k-frame::allow-split-window t))
     (with-selected-window window
       (with-selected-window (apply 'split-window args)
 	(switch-to-buffer buffer)
-	(k-frame::flash-frame)))))
+	(k-frame::flash-frame)
+	(selected-window)))))
 
 (defun k-frame::drop-frame (frame)
   "Drop FRAME, which was used for a temporary buffer placement."
@@ -651,34 +659,36 @@ F1 and F2 are alists of frame coords, keyed by frame."
 
 (defun k-frame::place-buffer-in-new-frame (buffer)
   "Place BUFFER in its own frame so that the placement can be undone by
-  a call to `k-frame::undo-last-placement'."
+  a call to `k-frame::undo-last-placement', returning the frame's
+  selected window."
   (with-current-buffer buffer
     (let* ((frame (new-frame))
 	   (cur-window (selected-window))
-	   (window (car (window-list frame))))
+	   (window (frame-selected-window frame)))
       (setq k-frame::restoration-data
 	    (list
 	     'k-frame::drop-frame frame))
       (with-selected-window window
-	(k-frame::flash-frame)))))
+	(k-frame::flash-frame)
+	window))))
       
-(selected-window)
 (defun k-frame::undo-last-placement ()
   "Undo the last action of `k-frame::place-buffer'. "
   (apply (car k-frame::restoration-data)
 	 (cdr k-frame::restoration-data)))
 
 (defun k-frame::place-buffer (buffer &rest args)
-  "Attempt to find a place to display BUFFER.  If ARGS are provided we
-  are dealing with a new buffer.  Repeated calls to this function will
-  exchange the last attempt for a new one.   ARGS provide a number of
-  options which may be tried.  Each entry in ARGS may be either a window
-  or a list containing a label (this may be used in order to
-  re-prioritise the list prior to ths function being called), a function
-  and the function's arguments.  Each arg from args will be tried on 
-  successive calls.  If arg is a function and returns nil, the next arg
-  will be tried.  When all args have been exhausted, we start again from
-  the beginning." 
+  "Attempt to find a place to display BUFFER, returning the
+  window in which the buffer was placed.  If ARGS are provided we
+  are dealing with a new buffer.  Repeated calls to this function
+  will exchange the last attempt for a new one.  ARGS provide a
+  number of options which may be tried.  Each entry in ARGS may
+  be either a window or a list containing a label (this may be
+  used in order to re-prioritise the list prior to ths function
+  being called), a function and the function's arguments.  Each
+  arg from args will be tried on successive calls.  If arg is a
+  function and returns nil, the next arg will be tried.  When all
+  args have been exhausted, we start again from the beginning."
   (setq this-command 'k-frame::place-buffer)
   (if args
       (setq k-frame::temporarily-placed-buffer buffer
@@ -693,8 +703,7 @@ F1 and F2 are alists of frame coords, keyed by frame."
      ((windowp head)
       (k-frame::place-buffer-in-window buffer head))
      (t
-      (apply (cadr head) (car (cddr head))))))
-  (car k-frame::place-buffer-args))
+      (apply (cadr head) (car (cddr head)))))))
 
 (defun k-frame::prioritize-placements (placements buffer)
   "Take an ordered list of PLACEMENTS, and prioritise them as follows:
@@ -748,93 +757,33 @@ options for buffer-placement."
 	'k-frame::place-buffer-in-new-frame
 	(list buffer)))
 
-(defvar k-frame::result-of-split nil
-  "Record of the window returned by splitting off a small window in
-  `k-frame::split-window' below.  The small window is used to minimise
-  the amount of display redrawing that is needed when subverting the
-  normal split-window mechanism.")
+(defvar k-frame::display-buffer-window nil
+  "Provides `k-frame::display-buffer-actor' with a window to use instead
+  of offering a bunch of options.")
 
-(defun k-frame::handle-window-split ()
-  "Called from post-command hook function to complete the action started
-  by a call to split-window.  We defer this stage so that whatever
-  command caused the window to be split has the opportunity to switch to
-  a new buffer in that window.  What this function does is attempt to
-  find a more suitable location to display the buffer."
-  (message "HANDLE WINDOW SPLIT")
-  (let* ((k-frame::allow-split-window t)
-	 (orig-window (car k-frame::window-to-split))
-	 (buffer (window-buffer k-frame::result-of-split))
-	 window-list split-window-entry new-frame-entry)
-    ;; Restore the window configuration from before our split-window
-    ;; call.
-    (set-window-configuration (nth 1 k-frame::window-to-split))
-    ;; Create an entry, for our list of buffer placement options, that
-    ;; performs the split-window as originally requested.
-    (unless k::in-emacsclient
-      (setq split-window-entry
-	    (k-frame::make-split-window-entry
-	     buffer orig-window (nth 2 k-frame::window-to-split))))
-    ;; Create an entry, for our list of buffer placement options, that
-    ;; places buffer on a new-frame
-    (setq new-frame-entry (k-frame::make-frame-entry buffer))
-    ;; Create the full list of buffer placement options for
-    ;; k-frame::place-buffer.
-    (setq
-     k-frame::window-to-split nil
-     window-list (k-frame::prioritize-placements
-		  (append (k-frame::all-windows (selected-window) t)
-			  (if k::in-emacsclient
-			      (list new-frame-entry)
-			    (list split-window-entry
-				  new-frame-entry)))
-		  buffer))
-    ;; Place buffer at the first entry from our list of possible
-    ;; placements. 
-    (apply 'k-frame::place-buffer buffer window-list)))
+(defvar k-frame::last-placed-buffer nil
+  "Records the last placed buffer by `k-frame::display-buffer-actor'.")
 
-(defvar k-frame::emacsclient-window nil
-  "The selected window of a frame newly created for emacsclient.")
-
-(defun k-frame::split-window (orig-fun &rest args)
-  "Advice function to override normal window splitting mechanism so that
-  whatever buffer appears in the new window can be placed more sanely in:
-  an existing frame if possible; a new frame if desirable; or in a newly
-  split window if necessary."
-  (message "SPLIT WINDOW")
-  (or k-frame::emacsclient-window
-      (if (or k-frame::allow-split-window
-	      (minibuffer-window-active-p (selected-window)))
-	  (apply orig-fun args)
-	(let ((window (selected-window))
-	      split-window-keep-point)
-	  (setq k-frame::window-to-split
-		(list window
-		      (current-window-configuration (window-frame window))
-		      args))
-	  (k-frame::save-window-positions window)
-	  (let ((k-frame::allow-split-window t))
-	    ;; Create a very small window as it will have minimal
-	    ;; resdisplay requirements.  This will initially be used
-	    ;; instead of the normal-sized window that split-window
-	    ;; would normally return.  The contents of this window will
-	    ;; be examined through our pos-command hook function, which
-	    ;; will provide an alternative, initial, placement for that
-	    ;; buffer, and allow the user to choose other, possibly more
-	    ;; suitable, alternative placements through
-	    ;; `k-frame::next-window-or-placment'.
-	    (setq k-frame::result-of-split
-		  (split-window window -2)))))))
-
-(defun k-frame::split-window-command (orig-fun &rest args)
-  "Advice function for split-window commands to cancel our override of
-  normal split-window functionality for explicitly called commands."
-  (let ((k-frame::allow-split-window t))
-    (apply orig-fun args)))
-
-;; The following advice is safe when k-mode is inactive so let's just
-;; make it unconditional.
-(advice-add 'split-window-vertically :around #'k-frame::split-window-command)
-(advice-add 'split-window-horizontally :around #'k-frame::split-window-command)
+(defun k-frame::display-buffer-actor (buffer alist)
+  "An action function for `display-buffer' that displays BUFFER in a
+  sensible default window and allows it to be repositioned to other
+  windows by the user.  It completely ignores ALIST as it has no respect
+  for emacs' standard window allocation mechanism.
+  Returns the allocated window."
+  (message "DISPLAY BUFFER ACTOR %s %s" buffer alist)
+  (setq k-frame::last-placed-buffer buffer)
+  (if k-frame::display-buffer-window
+      (progn
+	(set-window-buffer k-frame::display-buffer-window buffer)
+	k-frame::display-buffer-window)
+    (let* ((window-list (k-frame::prioritize-placements
+			 (append (k-frame::all-windows (selected-window) t)
+				 (list
+				  (k-frame::make-frame-entry buffer)))
+			 buffer))
+	   (result (apply 'k-frame::place-buffer buffer window-list)))
+      (message "DISPLAY BUFFER ACTOR RESULT: %s" result)
+      result)))
 
 
 ;;;
@@ -923,11 +872,6 @@ checked.")
   "Post-command hook function for recording basic window state."
   (let ((window (selected-window)))
     (unless (window-minibuffer-p window)
-      (when k-frame::window-to-split
-	(k-frame::handle-window-split))
-      (when k-frame::window-to-delete
-	(delete-window k-frame::window-to-delete)
-	(setq k-frame::window-to-delete nil))
       (when (k-frame::window-changed-p window)
 	(and (k-frame::last-noted-window)
 	     (k-frame::leave-window (k-frame::last-noted-window)))
@@ -1075,33 +1019,41 @@ only with FRAME."
 
 (defun k-frame::server-create-window-system-frame (orig-fun &rest args)
   "Advice function for handling emacsclient windows, so they don't get
-  associated with existing buffers."
+  associated with existing buffers.  This simply records the fact that a
+  new window (actually frame) has been created so that we don't feel the
+  need later to do the same thing."
   (setq k::norecord-buffer (current-buffer))
   (let ((frame (apply orig-fun args)))
     (raise-frame frame)
-    (setq k-frame::emacsclient-window
-	  (frame-selected-window frame))))
+    (setq k-frame::display-buffer-window (frame-selected-window frame))))
 
 (defun k-frame::server-process-filter (orig-fun &rest args)
-  (let ((k::in-emacsclient t)
-	k::norecord-buffer)
+  "Advice function for `server-process-filter'.  This function is called
+  to handle requests from emacsclient.  Note that unless the emacsclient
+  call explicitly created a frame, we will use display-buffer to allow
+  our buffer to be placed where the user chooses."
+  (let* ((k::in-emacsclient t)
+	 (last-placed-buffer k-frame::last-placed-buffer)
+	 (window (selected-window))
+	 (cur-buffer (window-buffer window))
+	 k-frame::display-buffer-window ;; Set in fn above
+	 k::norecord-buffer)
     (prog1
-	(apply orig-fun args))
-    (k-frame::post-command)
-    (when k-frame::emacsclient-window
-      (k-frame::forget-buffer-visit
-       ;; Remove all trace of new frame's original buffer
-       k-frame::emacsclient-window  k::norecord-buffer)
-      (setq k-frame::emacsclient-window nil))
-    (setq last-command this-command) ;; So buffer-placement can work
-    ))
-
-(defun k-frame::shell (orig-fun &rest args)
-  (let ((window (selected-window))
-	(buffer (apply orig-fun args)))
-    (if (not (eq buffer (window-buffer window)))
-	(k-frame::forget-buffer-visit window buffer))
-    buffer))
+	(apply orig-fun args)
+      (setq last-command 'k-frame::server-process-filter)
+      (unless k-frame::display-buffer-window
+	;; We have not created a frame specifically for this emacsclient
+	;; session.
+	(setq last-command 'k-frame::place-buffer)
+	(when (eq last-placed-buffer k-frame::last-placed-buffer)
+	  ;; `display-buffer' has not been used so our selected window
+	  ;; must have the new buffer on it.  Let's give the user the
+	  ;; chance to locate that buffer elsewhere.
+	  (let ((new-buffer (window-buffer window)))
+	    ;; Restore the window that was just taken over
+	    (set-window-buffer window cur-buffer)
+	    (k-frame::forget-buffer-visit window new-buffer)
+	    (display-buffer new-buffer)))))))
 
 
 ;;;
@@ -1118,32 +1070,45 @@ only with FRAME."
    nil t)
   (setq k-frame::last-noted-buffer (current-buffer)))
 
+(defvar k-frame::display-buffer-overriding-action nil
+  "Record of previous value of `display-buffer-overriding-action'.")
+
+
 (defun k-frame::activate ()
   "Activate the k-frame stuff."
   (k-frame::reset-state)
   (k-frame::check-wmctrl)
+  (unless k-frame::display-buffer-overriding-action
+    (setq k-frame::display-buffer-overriding-action
+	  display-buffer-overriding-action
+	  display-buffer-overriding-action
+	  (list #'k-frame::display-buffer-actor)))
   (advice-add 'split-window :around #'k-frame::split-window)
   (advice-add 'handle-switch-frame :before #'k-frame::handle-switch-frame)
   (advice-add 'server-create-window-system-frame :around
 	      #'k-frame::server-create-window-system-frame)
   (advice-add 'server-process-filter :around
 	      #'k-frame::server-process-filter)
-  (advice-add 'shell :around #'k-frame::shell)
   (add-hook 'buffer-list-update-hook #'k-frame::update-buffer-list)
   (add-hook 'kill-buffer-hook #'k-frame::kill-buffer)
   (add-hook 'delete-frame-functions #'k-frame::delete-frame)
   (add-hook 'pre-command-hook #'k-frame::pre-command)
   (add-hook 'post-command-hook #'k-frame::post-command))
 
+(setq debug-on-error t)
+(k-frame::post-command)
+
 (defun k-frame::deactivate ()
   "Deactivate the k-frame stuff."
+  (setq display-buffer-overriding-action
+	k-frame::display-buffer-overriding-action
+	k-frame::display-buffer-overriding-action nil)
   (advice-remove 'split-window #'k-frame::split-window)
   (advice-remove 'handle-switch-frame #'k-frame::handle-switch-frame)
-  (advice-add 'server-create-window-system-frame
-	      #'k-frame::server-create-window-system-frame)
-  (advice-remove 'server-process-filter :around
+  (advice-remove 'server-create-window-system-frame
+		 #'k-frame::server-create-window-system-frame)
+  (advice-remove 'server-process-filter
 		 #'k-frame::server-process-filter)
-  (advice-remove 'shell #'k-frame::shell)
   (remove-hook 'buffer-list-update-hook #'k-frame::update-buffer-list)
   (remove-hook 'kill-buffer-hook #'k-frame::kill-buffer)
   (remove-hook 'delete-frame-functions #'k-frame::delete-frame)
@@ -1164,6 +1129,12 @@ only with FRAME."
 
 (provide 'k-frame)
 
+
+(when nil
+
+
+)
+
 (when nil
   (setq frame (selected-frame))
   (setq buffers
@@ -1182,4 +1153,7 @@ only with FRAME."
   (k-frame::check-buffer-killable comp)
   (message "WIBBLE")
   (message "WUBBLE")
+
+  
+  
   )

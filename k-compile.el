@@ -127,10 +127,15 @@ provide a different compilation command history for each project."
 (add-hook 'k-mode-activation-hook #'k-compile::activate)
 (add-hook 'k-mode-deactivation-hook #'k-compile::deactivate)
 
+(require 'compile)
+
+;; Some error handling stuff for flutter
+(add-to-list 'compilation-error-regexp-alist 'flutter)
+(add-to-list
+ 'compilation-error-regexp-alist-alist
+ '(flutter "^[^•]*•[^•]* at \\(.*\\):\\([0-9]*\\):\\([0-9]*\\) •" 1 2 3))
+
+
 (provide 'k-compile)
 
-(when nil
-  ;; Debug code
-  (k-compile::activate)
-  (k-compile::deactivate)
-  )
+

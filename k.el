@@ -65,5 +65,10 @@
 (require 'k-search)
 (provide 'k)
 
+;; A few random-ish definitions which make sense with k mode:
+
+(setq debugger-bury-or-kill 'kill)
+
+
 (k-mode)
 
